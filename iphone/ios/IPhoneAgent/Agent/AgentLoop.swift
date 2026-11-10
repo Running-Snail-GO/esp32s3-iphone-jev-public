@@ -36,6 +36,9 @@ extension Pointer: Gestures {}
     /// confirmations, completion checks and uncertain Jev results.
     var jev: JevDeciding?
     var jevMinConfidence = 0.85
+    var predictiveBatch = false
+    var locateText: (String, Data) async -> CGPoint? = { await ScreenText.locate($0, in: $1) }
+    private var roundCount = 0
     private var jevUnavailable = false
     let trace: TraceStore?
     let maxSteps: Int, maxFailures: Int
@@ -106,6 +109,8 @@ extension Pointer: Gestures {}
         if running { throw DeviceError(message: "agent already running") }
         guard screen?.live == true else { throw DeviceError(message: "no phone screen: start Screen Mirroring first") }
         self.task = task; plan = ""; steps = []; shots = [:]
+        roundCount = 0
+        metrics?.beginRun()
         notebook = Notebook(); learned = []
         recalled = memory?.recall(chatContext.isEmpty ? task : task + "\n" + chatContext) ?? []
         pointerAt = .zero
@@ -235,6 +240,7 @@ extension Pointer: Gestures {}
                 reply = try await llm.chat(system: system, text: prompt, image: sent,
                                            maxTokens: maxTokens, temperature: temperature)
             } catch {
+                metrics?.modelRequest(seconds: now() - started)
                 if !Task.isCancelled {
                     onModelCall?(ModelCall(role: role, model: llm.model, reply: nil, error: error, imageKB: (sent?.count ?? 0) / 1024))
                 }
@@ -254,6 +260,7 @@ extension Pointer: Gestures {}
                                      reconnectUntil: reconnectDeadline)
             }
             let seconds = ((now() - started) * 100).rounded() / 100
+            metrics?.modelRequest(seconds: now() - started)
             metrics?.llm(first: reply.firstToken, total: reply.total)
             onModelCall?(ModelCall(role: role, model: llm.model, reply: reply, error: nil, imageKB: (sent?.count ?? 0) / 1024))
             var rec: JObject = ["role": .str(role), "model": .str(llm.model), "prompt": .str(prompt),
@@ -371,27 +378,42 @@ extension Pointer: Gestures {}
     /// The actor's system prompt: the original, plus an intent's checklist as hints.
     var actorPrompt: String {
         let base = Prompts.actor + "\n" + AssistiveTouchSpots.rule + background
+            + (predictiveBatch ? "\n\n" + Prompts.predictive : "")
         let all = hints + replay.hints
         return all.isEmpty ? base : base + "\n\nHints for this task:\n" + all.map { "- " + $0 }.joined(separator: "\n")
     }
 
     func finish() {
         keepLessons()
+        metrics?.endRun()
         if let metrics { trace?.writeMetrics(metrics.snapshot()) }
     }
 
     /// One see-think-act round (one or more actions). Returns true when the task is over.
     func step() async throws -> Bool {
         var timing = Metrics.Step()
+        timing.mode = predictiveBatch ? "predictive" : "standard"
+        let began = now(), modelBefore = metrics?.modelWaitMs ?? 0
+        roundCount += 1
+        defer {
+            timing.totalMs = (now() - began) * 1000
+            if let metrics { timing.llmMs = metrics.modelWaitMs - modelBefore; metrics.step(timing) }
+            trace?.writeTiming(timing, round: roundCount)
+        }
         let acts = try await nextActions()
+        timing.planned = acts.count
         timing.llmMs = (acts[0].act["think_s"]?.double ?? 0) * 1000
         let seen = acts[0].shot
         var spots = [pointerAt]  // where the pointer was and goes: pointer moves are not screen changes
         let stuck = repeating(acts[0].act)
-        defer { metrics?.step(timing) }
         for (i, planned) in acts.enumerated() {
             var act = planned.act
-            let name = act["action"]?.str ?? ""
+            var shot = planned.shot
+            var name = act["action"]?.str ?? ""
+            act["round"] = .int(roundCount)
+            act["batch_index"] = .int(i + 1)
+            act["batch_size"] = .int(acts.count)
+            act["execution_mode"] = .str(timing.mode)
             if name == "replan" || stuck {
                 record(planned.shot, act)
                 try await replan(stuck: stuck)
@@ -408,35 +430,90 @@ extension Pointer: Gestures {}
                 continue
             }
             if name == "done" { attachNotebook(&act) }
+            let actionBegan = now()
             if name != "done" && name != "fail" {
                 try await gate?()
+                try Task.checkCancellation()
                 guard !connectionChanged(since: acceptedLookLinks) else {
                     throw InvalidatedLook.connectionChanged
                 }
+                if name == "tap_text" {
+                    let checking = now()
+                    guard predictiveBatch, let screen, screen.live, let frame = screen.frame else { throw BlindError() }
+                    shot = frame
+                    onDoing?(.looking)
+                    let point = await locateText(act["text"]?.str ?? "", frame)
+                    let checkSeconds = now() - checking
+                    timing.checkMs += checkSeconds * 1000
+                    act["check_s"] = .num(checkSeconds)
+                    try Task.checkCancellation()
+                    try await gate?()
+                    guard !connectionChanged(since: acceptedLookLinks), screen.live else { throw InvalidatedLook.connectionChanged }
+                    guard let point, point.x.isFinite, point.y.isFinite,
+                          (0...1).contains(point.x), (0...1).contains(point.y),
+                          frame == screen.frame || Vision.similar(frame, screen.frame) else {
+                        timing.interrupted = true
+                        act["action"] = .str("batch stopped")
+                        act["reason"] = .str("Predicted text target was missing, ambiguous, or changed. Look again; use a coordinate tap on the current screenshot if needed.")
+                        record(shot, act)
+                        return false
+                    }
+                    act["target_text"] = act["text"]
+                    act["text"] = nil
+                    act["action"] = .str("tap")
+                    act["x"] = .int(Int((point.x * 1000).rounded()))
+                    act["y"] = .int(Int((point.y * 1000).rounded()))
+                    name = "tap"
+                }
                 onDoing?(.acting(act))  // the thought (on the first act) names the target
                 let started = now()
-                try await perform(act)
+                do { try await perform(act) } catch {
+                    let seconds = now() - started
+                    timing.hidMs += seconds * 1000
+                    timing.interrupted = true
+                    act["act_s"] = .num(seconds)
+                    act["total_s"] = .num(now() - actionBegan)
+                    act["reason"] = .str(error.localizedDescription)
+                    act["action_failed"] = .bool(true)
+                    record(shot, act)
+                    throw error
+                }
                 lastActed = now()
                 let s = lastActed - started
                 timing.hidMs += s * 1000
                 act["act_s"] = .num((s * 100).rounded() / 100)
                 spots += pointerPath(act)
                 pointerAt = spots.last!
+                timing.actions += 1
             }
-            record(planned.shot, act)
-            if name == "done" || name == "fail" { return true }
+            if name == "done" || name == "fail" { record(shot, act); return true }
             let following = i < acts.count - 1 ? acts[i + 1].act["action"]?.str : nil
-            if name == "tap" && (following == "type" || following == "key") {  // a missed tap never opened the field
-                timing.frameMs += await settle()
-                if !Vision.changed(seen, screen?.frame, ignore: spots) {
-                    steps[steps.count - 1]["changed"] = .bool(false)
-                    return false  // skip the rest; the actor looks again
+            let checksFocus = name == "tap" && (following == "type" || following == "key")
+            if predictiveBatch || following == nil || checksFocus {
+                let frameMs = await settle()
+                timing.frameMs += frameMs
+                act["frame_s"] = .num(frameMs / 1000)
+                act["changed"] = .bool(Vision.changed(predictiveBatch ? shot : seen, screen?.frame, ignore: spots))
+                // A predicted follow-up must never see a frame captured before this action.
+                if predictiveBatch, following != nil {
+                    guard let screen, screen.live else { throw BlindError() }
+                    let freshStart = now()
+                    let fresh = await screen.fresh(since: lastActed)
+                    let extra = now() - freshStart
+                    timing.frameMs += extra * 1000
+                    act["frame_s"] = .num((act["frame_s"]?.double ?? 0) + extra)
+                    if fresh == nil { timing.interrupted = true }
                 }
             }
+            act["total_s"] = .num(now() - actionBegan)
+            record(shot, act)
+            if timing.interrupted || checksFocus && act["changed"]?.bool == false { return false }
         }
-        timing.frameMs += await settle()
         // feedback for the next round (a notebook action alone moves nothing: no verdict)
-        guard !Actions.notebookActions.contains(steps.last?["action"]?.str ?? "") else { return false }
+        guard !Actions.notebookActions.contains(steps.last?["action"]?.str ?? "") else {
+            if timing.actions > 0 { timing.frameMs += await settle() }
+            return false
+        }
         steps[steps.count - 1]["changed"] = .bool(Vision.changed(seen, screen?.frame, ignore: spots))
         return false
     }
@@ -478,7 +555,7 @@ extension Pointer: Gestures {}
     func nextActions() async throws -> [Planned] {
         guard let actor else { throw LLMError(message: "no actor model") }
         // actions and their effect only: echoing earlier thoughts makes the model repeat them instead of looking
-        let hidden: Set<String> = ["t", "plan", "plan_zh", "think_s", "act_s", "shot", "thought", "thought_zh", "changed", "replay", "executor"]
+        let hidden = Actions.meta.union(["plan", "plan_zh"])
         let history = steps.suffix(8).filter { $0["plan"] == nil }.map { s -> String in
             let effect = s["changed"] == .bool(true) ? " -> screen changed"
                 : s["changed"] == .bool(false) ? " -> screen did NOT change" : ""
@@ -500,7 +577,7 @@ extension Pointer: Gestures {}
             decisionSeconds += seconds
             reply = text
             var acts: [JObject]
-            do { acts = try Actions.parseActions(text) } catch { continue }
+            do { acts = try Actions.parseActions(text, predictive: predictiveBatch) } catch { continue }
             if missed, let last = steps.last, Actions.key(acts[0]) == Actions.key(last) {  // same move that did nothing
                 prompt += "\n\nYou just proposed \(PyJSON.dumps(Actions.key(acts[0]))) again, but it changed nothing last "
                     + "time. Choose a different action (another position, a shorter swipe, or another way)."

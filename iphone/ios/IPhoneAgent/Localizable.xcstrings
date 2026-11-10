@@ -9152,6 +9152,126 @@
           }
         }
       }
+    },
+    "Predictive batches (experimental)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预测批量动作（实验功能）"
+          }
+        }
+      }
+    },
+    "Predict up to 3 actions per model reply. Future text buttons are located on fresh screenshots on this iPhone. If a label is missing or ambiguous, ask the model again. Turn this off to compare with the original mode." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每次最多预测 3 个动作。后续文字按钮由本机在最新截图中识别定位；文字缺失或不唯一时，停止本批并重新询问模型。关闭此开关可与原模式对比。"
+          }
+        }
+      }
+    },
+    "Prediction stopped; checking again" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预测已停止，重新检查画面"
+          }
+        }
+      }
+    },
+    "Run elapsed (includes pauses)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次运行用时（含暂停）"
+          }
+        }
+      }
+    },
+    "Rounds / actions / model requests" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轮次 / 已执行动作 / 模型请求"
+          }
+        }
+      }
+    },
+    "Model request time (this run)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次模型请求累计耗时"
+          }
+        }
+      }
+    },
+    "Round timings (latest 40)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每轮耗时（最近 40 轮）"
+          }
+        }
+      }
+    },
+    "A round can execute several actions from one model reply. AI time includes network and model processing. Totals include pauses and other overhead. Export traces for the full timings.csv; model time appears once per batch in step review." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每轮可执行模型一次返回的多个动作。AI 耗时包含网络及模型处理，总用时还包含暂停等开销。导出诊断可获得完整 timings.csv；回放中共享的 AI 耗时仅记录在每批首步。"
+          }
+        }
+      }
+    },
+    "AI" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI"
+          }
+        }
+      }
+    },
+    "Action" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "动作"
+          }
+        }
+      }
+    },
+    "Check" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "识别"
+          }
+        }
+      }
+    },
+    "Total" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合计"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

@@ -8,6 +8,7 @@ enum StepText {
         case "plan": return String(localized: "Made a plan")
         case "replan (stuck)", "replan": return String(localized: "Made a new plan")
         case "tap": return String(localized: "Tap at \(n("x")), \(n("y"))")
+        case "batch stopped": return String(localized: "Prediction stopped; checking again")
         case "swipe": return String(localized: "Swipe")
         case "path": return String(localized: "Draw a path")
         case "circle": return String(localized: "Draw a circle")
@@ -40,6 +41,18 @@ enum StepText {
         case "check": return String(localized: "Checked")
         default: return s["action"]?.str ?? ""
         }
+    }
+
+    /// Model time is charged once, to the first action of a batch; the other times are per action.
+    static func timing(_ s: JObject) -> String {
+        let parts: [(String, Double?)] = [
+            (String(localized: "AI"), s["think_s"]?.double),
+            (String(localized: "Action"), s["act_s"]?.double),
+            (String(localized: "Frame"), s["frame_s"]?.double),
+            (String(localized: "Check"), s["check_s"]?.double)
+        ]
+        return parts.compactMap { title, seconds in seconds.map { String(format: "%@ %.2f s", title, $0) } }
+            .joined(separator: " · ")
     }
 
     /// The model's own words if it gave any, else the action.
@@ -77,7 +90,7 @@ enum StepText {
 
     static let notMoves: Set<String> = ["plan", "replan (stuck)", "hiccup", "stopped", "error", "fail", "done", "help",
                                         "takeover", "skipped", "note", "reconnected", "confirm", "confirmed",
-                                        "read", "progress", "remember", "learn", "ai done", "check"]
+                                        "read", "progress", "remember", "learn", "ai done", "check", "batch stopped"]
 }
 
 /// How a run ended.

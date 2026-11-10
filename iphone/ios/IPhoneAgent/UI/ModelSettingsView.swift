@@ -39,6 +39,11 @@ struct ModelSettingsView: View {
                 }
             }
             Section {
+                Toggle("Predictive batches (experimental)", isOn: $settings.predictiveBatch)
+            } footer: {
+                Text("Predict up to 3 actions per model reply. Future text buttons are located on fresh screenshots on this iPhone. If a label is missing or ambiguous, ask the model again. Turn this off to compare with the original mode.")
+            }
+            Section {
                 Toggle("Use Jev for execution", isOn: $settings.jevEnabled)
                 if settings.jevEnabled {
                     SecureField("TypeSafe API key", text: $settings.jevAPIKey)

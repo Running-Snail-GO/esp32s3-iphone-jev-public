@@ -8,11 +8,12 @@ enum Actions {
     }
 
     /// Bookkeeping keys that are not part of the action itself.
-    static let meta: Set<String> = ["t", "thought", "thought_zh", "think_s", "act_s", "shot", "_shot", "changed", "replay", "executor"]
+    static let meta: Set<String> = ["t", "thought", "thought_zh", "think_s", "act_s", "shot", "_shot", "changed", "replay", "executor",
+                                    "frame_s", "check_s", "total_s", "round", "batch_index", "batch_size", "execution_mode", "target_text", "action_failed"]
 
     /// action name -> argument names; numeric arguments are 0-1000 screen coordinates
     static let actions: [String: [String]] = [
-        "tap": ["x", "y"], "swipe": ["x1", "y1", "x2", "y2"], "circle": ["x", "y", "r"], "path": ["points"],
+        "tap": ["x", "y"], "tap_text": ["text"], "swipe": ["x1", "y1", "x2", "y2"], "circle": ["x", "y", "r"], "path": ["points"],
         "type": ["text"], "key": ["combo"], "done": ["answer"], "fail": ["reason"], "confirm": ["reason"],
         "home": [], "back": [], "wait": [], "replan": [], "open": ["app"],
         "read": ["what"], "note": ["text"], "progress": ["text"], "remember": ["text"], "learn": ["text"], "write": [],
@@ -49,12 +50,15 @@ enum Actions {
     }
 
     /// Parse a THINK / DO… reply (an optional ZH line is kept); the thought goes on the first action.
-    static func parseActions(_ text: String) throws -> [JObject] {
+    static func parseActions(_ text: String, predictive: Bool = false) throws -> [JObject] {
         let thought = firstGroup(#"^\s*THINK\s*[:：]\s*(.*?)\s*$"#, in: text, multiline: true)
         let zh = firstGroup(#"^\s*ZH\s*[:：]\s*(.*?)\s*$"#, in: text, multiline: true)
         var acts = try allGroups(#"^\s*DO\s*[:：]\s*(.*?)\s*$"#, in: text).map(parseCommand).prefix(6).map { $0 }
         guard !acts.isEmpty else { throw ParseError(message: "no DO line in reply: \(text.prefix(200))") }
-        acts = blindSafe(acts)
+        if !predictive && acts.contains(where: { $0["action"]?.str == "tap_text" }) {
+            throw ParseError(message: "tap_text requires predictive execution")
+        }
+        acts = predictive ? predictiveSafe(acts) : blindSafe(acts)
         acts[0] = JObject([("thought", .str(thought ?? "")), ("thought_zh", .str(zh ?? ""))]).merging(acts[0])
         return acts
     }
@@ -83,6 +87,21 @@ enum Actions {
     static func isKeyboardSwitch(_ a: JObject) -> Bool {
         guard a["action"]?.str == "key", let combo = a["combo"]?.str?.lowercased() else { return false }
         return combo.replacingOccurrences(of: " ", with: "") == "ctrl+space"
+    }
+
+    /// Only text targets can follow a predicted screen transition. A coordinate from the initial
+    /// screenshot must never become a blind tap on a later page. Text input remains a fresh-look boundary.
+    static func predictiveSafe(_ acts: [JObject]) -> [JObject] {
+        let ending: Set<String?> = ["done", "fail", "confirm", "write", "replan"]
+        var out: [JObject] = []
+        for a in acts.prefix(3) {
+            let name = a["action"]?.str
+            if !out.isEmpty && name != "tap_text" { break }
+            out.append(a)
+            if ending.contains(name) || name == "type" || name == "key" || name == "read"
+                || notebookActions.contains(name ?? "") { break }
+        }
+        return out
     }
 
     /// Split an optional EN: / ZH: plan reply; a plain reply is used for both.

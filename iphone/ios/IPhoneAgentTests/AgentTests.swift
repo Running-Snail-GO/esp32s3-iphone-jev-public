@@ -313,6 +313,134 @@ import XCTest
     var aspect = 0.46
 }
 
+@MainActor final class PredictiveBatchTests: XCTestCase {
+    private final class BatchScreen: ScreenSource {
+        var live = true
+        var frame: Data? = Data([1])
+        var updated = now()
+        var capturedAt = now()
+        var aspect = 0.46
+        var advances = true
+        private var sequence: UInt8 = 1
+        func afterAction(since: Double) async {
+            if advances {
+                sequence += 1; frame = Data([sequence])
+                capturedAt = now(); updated = capturedAt
+            }
+        }
+    }
+
+    func testPredictionsAreCappedAndFutureCoordinatesAreDropped() throws {
+        let reply = "DO: home\nDO: tap_text 时钟\nDO: tap_text 闹钟\nDO: tap_text 编辑"
+        let actions = try Actions.parseActions(reply, predictive: true)
+        XCTAssertEqual(actions.map { $0["action"]?.str }, ["home", "tap_text", "tap_text"])
+        XCTAssertEqual(try Actions.parseActions("DO: tap_text 闹钟\nDO: tap 20 30", predictive: true).count, 1)
+        XCTAssertThrowsError(try Actions.parseActions("DO: tap_text 闹钟"))
+    }
+
+    func testPredictedBatchCannotDeclareSuccessOrContinueAfterTyping() throws {
+        for reply in ["DO: home\nDO: done ok", "DO: type hello\nDO: tap_text 保存",
+                      "DO: key ctrl+space\nDO: tap_text 时钟", "DO: confirm send\nDO: tap_text 发送"] {
+            XCTAssertEqual(try Actions.parseActions(reply, predictive: true).count, 1)
+        }
+    }
+
+    func testTextTargetRequiresOneExactConfidentVisibleLabel() {
+        let box = CGRect(x: 0.2, y: 0.4, width: 0.2, height: 0.1)
+        let good = ScreenText.Label(text: "闹 钟", box: box, confidence: 0.95)
+        XCTAssertEqual(ScreenText.point(for: "闹钟", labels: [good]), CGPoint(x: box.midX, y: box.midY))
+        XCTAssertNil(ScreenText.point(for: "闹", labels: [good]), "No substring guesses")
+        XCTAssertNil(ScreenText.point(for: "闹钟", labels: [good, good]), "Duplicate labels are ambiguous")
+        XCTAssertNil(ScreenText.point(for: "闹钟", labels: [.init(text: "闹钟", box: box, confidence: 0.3)]))
+        XCTAssertNil(ScreenText.point(for: "闹钟", labels: [.init(text: "闹钟", box: CGRect(x: 0, y: 0, width: 1, height: 0.03), confidence: 1)]))
+    }
+
+    func testOneModelReplyDrivesThreeActionsUsingEachNewScreenAndRecordsTimings() async throws {
+        let screen = BatchScreen(), phone = FakeGestures(), metrics = Metrics()
+        let model = FakeModel { _ in "DO: home\nDO: tap_text 闹钟\nDO: tap_text 编辑" }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let trace = TraceStore(root: root); trace.start(task: "test predictive batch")
+        let agent = AgentLoop(phone: phone, screen: screen, actor: model, planner: nil, trace: trace)
+        agent.metrics = metrics; agent.predictiveBatch = true
+        var frames: [Data] = [], targets: [String] = []
+        agent.locateText = { label, frame in
+            targets.append(label); frames.append(frame); return CGPoint(x: 0.3, y: 0.4)
+        }
+        let finished = try await agent.step()
+        XCTAssertFalse(finished)
+        XCTAssertEqual(model.prompts.count, 1)
+        XCTAssertEqual(phone.calls, ["home", "tap", "tap"])
+        XCTAssertEqual(targets, ["闹钟", "编辑"])
+        XCTAssertEqual(frames, [Data([2]), Data([3])])
+        XCTAssertEqual(metrics.runActions, 3)
+        XCTAssertEqual(metrics.modelRequests, 1)
+        XCTAssertEqual(metrics.steps.last?.planned, 3)
+        XCTAssertEqual(agent.steps.last?["target_text"]?.str, "编辑")
+        XCTAssertNotNil(agent.steps.last?["frame_s"]?.double)
+        XCTAssertNotNil(agent.steps.last?["check_s"]?.double)
+        let csv = try String(contentsOf: XCTUnwrap(trace.dir).appendingPathComponent("timings.csv"), encoding: .utf8)
+        XCTAssertEqual(csv.split(separator: "\n").count, 2)
+        XCTAssertEqual(csv.split(separator: "\n")[1].split(separator: ",").count, 10)
+        XCTAssertTrue(csv.contains("1,predictive,3,3,false,"))
+    }
+
+    func testMissingLabelStopsTheRemainingPredictionsWithoutGuessing() async throws {
+        let screen = BatchScreen(), phone = FakeGestures(), metrics = Metrics()
+        let model = FakeModel { _ in "DO: home\nDO: tap_text 闹钟\nDO: tap_text 编辑" }
+        let agent = AgentLoop(phone: phone, screen: screen, actor: model, planner: nil, trace: nil)
+        agent.predictiveBatch = true; agent.metrics = metrics
+        var checks = 0
+        agent.locateText = { _, _ in checks += 1; return nil }
+        _ = try await agent.step()
+        XCTAssertEqual(phone.calls, ["home"])
+        XCTAssertEqual(checks, 1)
+        XCTAssertEqual(agent.steps.last?["action"]?.str, "batch stopped")
+        XCTAssertEqual(metrics.steps.last?.actions, 1)
+        XCTAssertEqual(metrics.steps.last?.interrupted, true)
+    }
+
+    func testStaleFramePreventsTheNextPredictedAction() async throws {
+        let screen = BatchScreen(), phone = FakeGestures()
+        screen.advances = false
+        let model = FakeModel { _ in "DO: home\nDO: tap_text 闹钟" }
+        let agent = AgentLoop(phone: phone, screen: screen, actor: model, planner: nil, trace: nil)
+        agent.predictiveBatch = true
+        var checks = 0
+        agent.locateText = { _, _ in checks += 1; return CGPoint(x: 0.5, y: 0.5) }
+        _ = try await agent.step()
+        XCTAssertEqual(phone.calls, ["home"])
+        XCTAssertEqual(checks, 0)
+    }
+
+    func testReconnectDuringLocalRecognitionInvalidatesTheTap() async throws {
+        let screen = BatchScreen(), phone = FakeGestures()
+        let device = try XCTUnwrap(phone.device as? FakeDevice)
+        let model = FakeModel { _ in "DO: tap_text 闹钟" }
+        let agent = AgentLoop(phone: phone, screen: screen, actor: model, planner: nil, trace: nil)
+        agent.predictiveBatch = true
+        agent.locateText = { _, _ in device.links += 1; return CGPoint(x: 0.5, y: 0.5) }
+        do { _ = try await agent.step(); XCTFail("The old recognition must be discarded") } catch {}
+        XCTAssertTrue(phone.calls.isEmpty)
+    }
+
+    func testRunMetricsResetBetweenRunsAndMetadataDoesNotChangeActionIdentity() {
+        let metrics = Metrics()
+        metrics.modelRequest(seconds: 2)
+        metrics.step(.init(frameMs: 100, llmMs: 2000, hidMs: 50, actions: 3))
+        XCTAssertEqual(metrics.modelRequests, 1)
+        XCTAssertEqual(metrics.runActions, 3)
+        metrics.beginRun()
+        XCTAssertTrue(metrics.steps.isEmpty)
+        XCTAssertEqual(metrics.modelRequests, 0)
+        XCTAssertEqual(metrics.modelWaitMs, 0)
+        XCTAssertEqual(metrics.runActions, 0)
+        metrics.endRun()
+        let tap: JObject = ["action": .str("tap"), "x": .int(20), "y": .int(30)]
+        XCTAssertEqual(Actions.key(tap.merging(["round": .int(3), "frame_s": .num(0.5), "batch_index": .int(2)])), tap)
+    }
+}
+
 @MainActor final class FakeDevice: HIDDevice {
     var links = 1
     var connected = true

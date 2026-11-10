@@ -87,6 +87,7 @@ extension AppModel {
             agent.planner = try await settings.client("planner")
             agent.jev = try settings.jevClient()
             agent.jevMinConfidence = settings.jevMinConfidence
+            agent.predictiveBatch = settings.predictiveBatch
         } catch is CancellationError {
             return  // Cancel while waiting for the free line
         } catch {

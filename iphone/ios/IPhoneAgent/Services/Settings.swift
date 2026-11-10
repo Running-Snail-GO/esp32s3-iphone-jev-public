@@ -45,6 +45,10 @@ struct JevCredentialStore {
     @Published var actorModel: String { didSet { defaults.set(actorModel, forKey: "actorModel"); configurationRevision += 1 } }        // "" = model
     @Published var tokenParam: String { didSet { defaults.set(tokenParam, forKey: "tokenParam"); configurationRevision += 1 } }        // auto | ...
     @Published var extraBody: String { didSet { defaults.set(extraBody, forKey: "extraBody"); configurationRevision += 1 } }          // JSON object
+    @Published var predictiveBatch: Bool { didSet {
+        defaults.set(predictiveBatch, forKey: "predictiveBatch")
+        if predictiveBatch != oldValue { configurationRevision += 1 }
+    } }
     @Published var apiKey: String { didSet { Keychain.set(apiKey, for: "llm-api-key"); redactModelKeys()
         if apiKey != oldValue { modelsChanged() } } }
     /// The executor is separate from the visual model provider, which still plans and handles fallback.
@@ -105,6 +109,7 @@ struct JevCredentialStore {
         actorModel = defaults.string(forKey: "actorModel") ?? ""
         tokenParam = defaults.string(forKey: "tokenParam") ?? "auto"
         extraBody = defaults.string(forKey: "extraBody") ?? "{}"
+        predictiveBatch = defaults.bool(forKey: "predictiveBatch")
         apiKey = Self.stored(Keychain.get("llm-api-key")) ?? preset("IAPresetKey") ?? ""
         jevEnabled = defaults.bool(forKey: "jevEnabled")
         jevModel = defaults.string(forKey: "jevModel") ?? "jev-latest"

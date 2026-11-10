@@ -42,6 +42,18 @@ import Foundation
         try? data.write(to: dir.appendingPathComponent("metrics.json"))
     }
 
+    /// Numeric per-round data; included automatically in the existing trace ZIP export.
+    func writeTiming(_ step: Metrics.Step, round: Int) {
+        guard let dir else { return }
+        let url = dir.appendingPathComponent("timings.csv")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            append("round,mode,planned,executed,interrupted,total_ms,model_ms,action_ms,frame_ms,check_ms\n", to: url)
+        }
+        let values = [step.totalMs, step.llmMs, step.hidMs, step.frameMs, step.checkMs]
+            .map { String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), $0) }.joined(separator: ",")
+        append("\(round),\(step.mode),\(step.planned),\(step.actions),\(step.interrupted),\(values)\n", to: url)
+    }
+
     func runs() -> [URL] {
         let items = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         return items.filter(\.hasDirectoryPath).sorted { $0.lastPathComponent > $1.lastPathComponent }

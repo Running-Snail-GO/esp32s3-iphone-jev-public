@@ -42,3 +42,54 @@ enum KeyboardLayout: Equatable {
         }
     }
 }
+
+/// On-device targets for predicted steps. Exact, unique whole-label matches only; no remote service.
+enum ScreenText {
+    struct Label {
+        let text: String
+        /// Top-left origin, in screen fractions (Vision observations use bottom-left origin).
+        let box: CGRect
+        let confidence: Float
+    }
+
+    static func point(for target: String, labels: [Label]) -> CGPoint? {
+        let wanted = normalized(target)
+        guard !wanted.isEmpty, wanted.count <= 64 else { return nil }
+        let matches = labels.filter {
+            $0.confidence >= 0.6 && normalized($0.text) == wanted
+                && $0.box.minX >= 0 && $0.box.minY >= Vision.topMask
+                && $0.box.maxX <= 1 && $0.box.maxY <= 1 && $0.box.width > 0 && $0.box.height > 0
+        }
+        guard matches.count == 1, let label = matches.first else { return nil }
+        return CGPoint(x: label.box.midX, y: label.box.midY)
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .filter { !$0.isWhitespace }
+    }
+
+    static func locate(_ target: String, in jpeg: Data) async -> CGPoint? {
+        guard let image = Vision.image(jpeg) else { return nil }
+        let labels: [Label] = await withCheckedContinuation { done in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.recognitionLanguages = ["zh-Hans", "en-US"]
+                request.usesLanguageCorrection = false
+                do {
+                    try VNImageRequestHandler(cgImage: image).perform([request])
+                    let labels = (request.results ?? []).compactMap { observation -> Label? in
+                        guard let text = observation.topCandidates(1).first else { return nil }
+                        let b = observation.boundingBox
+                        return Label(text: text.string,
+                                     box: CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height),
+                                     confidence: text.confidence)
+                    }
+                    done.resume(returning: labels)
+                } catch { done.resume(returning: []) }
+            }
+        }
+        return point(for: target, labels: labels)
+    }
+}

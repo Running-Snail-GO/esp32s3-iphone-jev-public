@@ -210,6 +210,10 @@ struct ReviewView: View {
                     Text(verbatim: thought).font(.subheadline).foregroundStyle(.secondary).lineLimit(expanded ? nil : 2)
                         .onTapGesture { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { expanded.toggle() } }
                 }
+                let timing = StepText.timing(step.action)
+                if !timing.isEmpty {
+                    Text(verbatim: timing).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
                 if !step.note.isEmpty {
                     Label { Text(verbatim: step.note) } icon: { Image(systemName: "pencil.line") }
                         .font(.subheadline).foregroundStyle(Palette.ok)
@@ -421,10 +425,10 @@ struct StepDetails: View {
             if let t = step.action["thought"]?.str { row("THINK", t) }
             row("DO", PyJSON.dumps(Actions.key(step.action).without(["plan", "plan_zh"]), ascii: false))
             if let c = step.action["changed"]?.bool { row("CHANGED", c ? "yes" : "no") }
-            let think = step.action["think_s"]?.double, act = step.action["act_s"]?.double
-            if think != nil || act != nil {
-                row("TIME", [think.map { String(format: "model %.1f s", $0) }, act.map { String(format: "action %.1f s", $0) }]
-                    .compactMap { $0 }.joined(separator: " · "))
+            let timing = StepText.timing(step.action)
+            if !timing.isEmpty { row("TIME", timing) }
+            if let round = step.action["round"]?.int {
+                row("BATCH", "\(round) · \(step.action["batch_index"]?.int ?? 1)/\(step.action["batch_size"]?.int ?? 1)")
             }
         }
     }

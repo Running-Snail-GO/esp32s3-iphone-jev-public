@@ -46,3 +46,25 @@ Routine operation runs on the phone; the computer is used for installation and s
 
 See [provenance](iphone/SOURCE.md), [NOTICE](NOTICE) and [MIT license](LICENSE).
 This repository contains no ESP32 firmware binary or AirPlay receiver implementation.
+
+## Predictive batches and timings (1.0.2)
+
+In Settings > Model, enable **Predictive batches (experimental)** to try up to
+three actions per vision-model reply. After the first action, predicted taps must
+name an exact text label. Apple Vision locates that label on a fresh screenshot
+on the phone; absent or ambiguous labels stop the batch and return to the model.
+Later-page coordinates are not executed. Icon-only controls, text input and
+completion still need a new model observation. No TypeSafe account is needed
+for this mode; leave Jev disabled when testing only your own vision provider.
+
+Turn the switch off to compare the original same-screen batching mode. Reuse the
+same task, starting screen and model for each run. Record success as well as time.
+Run review shows AI, action, frame-wait and local-recognition times for each step.
+Shared model time appears only on the first step of each batch. Diagnostics shows
+the current run's request/action counts, wall time and latest 40 round timings.
+Export traces for all rounds in **timings.csv**, per-action **steps.jsonl** and
+the run summary in **metrics.json**. Wall time includes pauses and other overhead;
+AI request time includes network and provider processing, not pure GPU time.
+
+This release remains experimental. Compilation and fake-device tests do not
+establish real-phone accuracy or a speedup; compare on your own phone after signing.

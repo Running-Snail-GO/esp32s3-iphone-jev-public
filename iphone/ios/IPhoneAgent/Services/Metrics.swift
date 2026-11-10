@@ -2,7 +2,13 @@ import Foundation
 
 /// Live numbers for the Diagnostics page; a snapshot goes into every trace (metrics.json).
 @MainActor final class Metrics: ObservableObject {
-    struct Step: Codable { var frameMs = 0.0, llmMs = 0.0, hidMs = 0.0 }
+    struct Step: Codable {
+        var frameMs = 0.0, llmMs = 0.0, hidMs = 0.0
+        var checkMs = 0.0, totalMs = 0.0
+        var actions = 0, planned = 0
+        var interrupted = false
+        var mode = "standard"
+    }
 
     // board, from status
     @Published var board: BoardStatus?
@@ -21,6 +27,27 @@ import Foundation
     @Published var backgroundDecodeErrors = 0
     // agent
     @Published var steps: [Step] = []
+    @Published var runRounds = 0
+    @Published var runActions = 0
+    @Published var modelRequests = 0
+    @Published var modelWaitMs = 0.0
+    @Published var runElapsedMs = 0.0
+    private var runBegan: Double?
+
+    func beginRun() {
+        steps = []; runRounds = 0; runActions = 0; modelRequests = 0; modelWaitMs = 0
+        runElapsedMs = 0; runBegan = now()
+        llmFirstMs = nil; llmTotalMs = nil
+        jevMs = nil; jevCalls = 0; jevFallbacks = 0
+    }
+    func endRun() {
+        if let runBegan { runElapsedMs = (now() - runBegan) * 1000 }
+        runBegan = nil
+    }
+    func modelRequest(seconds: Double) {
+        modelRequests += 1
+        modelWaitMs += max(0, seconds) * 1000
+    }
     @Published var llmFirstMs: Double?
     @Published var llmTotalMs: Double?
     @Published var llmPingMs: Double?
@@ -65,19 +92,23 @@ import Foundation
         llmTotalMs = total * 1000
     }
     func jev(ms: Double, fallback: Bool) {
+        modelRequest(seconds: ms / 1000)
         jevMs = ms
         jevCalls += 1
         if fallback { jevFallbacks += 1 }
     }
     func step(_ s: Step) {
+        runRounds += 1
+        runActions += s.actions
         steps = Array((steps + [s]).suffix(40))
-        DebugLog.write(String(format: "step %d timing: frame %.0f ms, LLM %.0f ms, HID %.0f ms", steps.count, s.frameMs,
-                              s.llmMs, s.hidMs))
+        DebugLog.write(String(format: "round %d timing: total %.0f ms, frame %.0f ms, LLM %.0f ms, HID %.0f ms, check %.0f ms, actions %d/%d (%@)", runRounds, s.totalMs, s.frameMs,
+                              s.llmMs, s.hidMs, s.checkMs, s.actions, s.planned, s.mode))
     }
 
     /// Called every second by a timer; also detects suspension (a gap far longer than the tick).
     func tick() {
         let t = now()
+        if let runBegan { runElapsedMs = (t - runBegan) * 1000 }
         if t - lastTick > 5 { suspensions += 1 }
         lastTick = t
         let span = max(t - windowStart, 0.001)
@@ -97,7 +128,11 @@ import Foundation
             "ble_kbps_app": bleKbps, "mtu": mtu, "drops": drops, "fps": fps, "decode_ms": decodeMs,
             "decode_errors": decodeErrors, "background_decode_errors": backgroundDecodeErrors,
             "background_alive_s": backgroundAlive, "suspensions": suspensions, "hid_ms": hidMs,
-            "steps": steps.map { ["frame_ms": $0.frameMs, "llm_ms": $0.llmMs, "hid_ms": $0.hidMs] },
+            "steps": steps.map { ["frame_ms": $0.frameMs, "llm_ms": $0.llmMs, "hid_ms": $0.hidMs,
+                                   "check_ms": $0.checkMs, "total_ms": $0.totalMs, "actions": $0.actions,
+                                   "planned": $0.planned, "interrupted": $0.interrupted, "mode": $0.mode] as [String: Any] },
+            "run_rounds": runRounds, "run_actions": runActions, "model_requests": modelRequests,
+            "model_wait_ms": modelWaitMs, "run_elapsed_ms": runElapsedMs,
         ]
         out["bench_kbps"] = benchKbps
         out["idr_interval_ms"] = idrIntervalMs

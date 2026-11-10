@@ -43,6 +43,9 @@ struct DiagnosticsView: View {
                 if !feed.note.isEmpty { Text(feed.note).font(.caption) }
             }
             SwiftUI.Section("Agent") {
+                row("Run elapsed (includes pauses)", seconds(metrics.runElapsedMs))
+                row("Rounds / actions / model requests", "\(metrics.runRounds) / \(metrics.runActions) / \(metrics.modelRequests)")
+                row("Model request time (this run)", seconds(metrics.modelWaitMs))
                 row("LLM first token / total", "\(f(metrics.llmFirstMs)) / \(f(metrics.llmTotalMs)) ms")
                 row("LLM ping", f(metrics.llmPingMs) + " ms")
                 if metrics.jevCalls > 0 {
@@ -53,6 +56,25 @@ struct DiagnosticsView: View {
                     row("Last step frame / LLM / HID", "\(f(s.frameMs)) / \(f(s.llmMs)) / \(f(s.hidMs)) ms")
                 }
                 ForEach(metrics.hidMs.keys.sorted(), id: \.self) { k in row("HID \(k)", f(metrics.hidMs[k]) + " ms") }
+            }
+            SwiftUI.Section {
+                ForEach(Array(metrics.steps.enumerated()), id: \.offset) { offset, s in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(verbatim: "#\(metrics.runRounds - metrics.steps.count + offset + 1) · \(s.actions)/\(s.planned) · \(s.mode)")
+                            .font(.caption.monospacedDigit())
+                        Text(verbatim: String(format: "%@ %@ · %@ %@ · %@ %@ · %@ %@ · %@ %@",
+                                              String(localized: "Total"), seconds(s.totalMs),
+                                              String(localized: "AI"), seconds(s.llmMs),
+                                              String(localized: "Action"), seconds(s.hidMs),
+                                              String(localized: "Frame"), seconds(s.frameMs),
+                                              String(localized: "Check"), seconds(s.checkMs)))
+                            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Round timings (latest 40)")
+            } footer: {
+                Text("A round can execute several actions from one model reply. AI time includes network and model processing. Totals include pauses and other overhead. Export traces for the full timings.csv; model time appears once per batch in step review.")
             }
             SwiftUI.Section("Background") {
                 row("Alive in background", String(format: "%.0f s", metrics.backgroundAlive))
@@ -94,6 +116,7 @@ struct DiagnosticsView: View {
     private func row(_ k: LocalizedStringKey, _ v: String) -> some View { ValueRow(title: k, value: v) }
 
     private func f(_ v: Double?, _ format: String = "%.0f") -> String { v.map { String(format: format, $0) } ?? "–" }
+    private func seconds(_ ms: Double) -> String { String(format: "%.2f s", ms / 1000) }
 }
 
 extension URL: @retroactive Identifiable { public var id: String { absoluteString } }

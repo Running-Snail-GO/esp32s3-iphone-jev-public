@@ -8,7 +8,7 @@ import Foundation
     static var keys: [String] {
         ["baseURL", "model", "autoModel", "plannerModel", "actorModel", "tokenParam", "extraBody", "modelProvider",
          "customEndpoints", "customEndpointID", Settings.agentNameKey,
-         "jevEnabled", "jevModel", "jevMinConfidence"]
+         "jevEnabled", "jevModel", "jevMinConfidence", "predictiveBatch"]
             + ModelProvider.allCases.map { "modelProfile." + $0.rawValue }
     }
     private static var pending: Task<Void, Never>?

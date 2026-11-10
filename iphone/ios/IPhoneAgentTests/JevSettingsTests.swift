@@ -26,6 +26,21 @@ import XCTest
         XCTAssertEqual(settings.jevModel, "jev-latest")
         XCTAssertEqual(settings.jevMinConfidence, 0.85)
         XCTAssertNil(try settings.jevClient())
+        XCTAssertFalse(settings.predictiveBatch)
+    }
+
+    func testPredictiveModePersistsWithoutAnyTypeSafeCredential() {
+        let (name, defaults) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let credentials = Credentials()
+        let settings = Settings(defaults: defaults, info: [:], jevCredentials: credentials.store)
+        let revision = settings.configurationRevision
+        settings.predictiveBatch = true
+        XCTAssertGreaterThan(settings.configurationRevision, revision)
+        let reopened = Settings(defaults: defaults, info: [:], jevCredentials: credentials.store)
+        XCTAssertTrue(reopened.predictiveBatch)
+        XCTAssertFalse(reopened.jevEnabled)
+        XCTAssertTrue(SettingsBackup.keys.contains("predictiveBatch"))
     }
 
     func testJevSetupSurvivesReloadWithoutChangingTheVisionProvider() {
