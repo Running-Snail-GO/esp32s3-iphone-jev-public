@@ -1,0 +1,4 @@
+iPhone application derived from ESP32 iPhone Agent by Henry Yuan.
+https://github.com/onehumanbeing/esp32-iphone-agent
+
+Original MIT notices are retained. This candidate adds optional TypeSafe Jev navigation and cloud build scripts. It contains no ESP32 firmware or AirPlay receiver implementation.

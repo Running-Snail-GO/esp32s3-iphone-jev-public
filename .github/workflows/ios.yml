@@ -1,0 +1,64 @@
+name: iPhone Agent IPA (Jev, public)
+permissions:
+  contents: write
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    name: Test and build unsigned iPhone IPA
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      JEV_BUNDLE_ID: ${{ inputs.bundle_id }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - name: Check out source
+      uses: actions/checkout@v5
+      with:
+        persist-credentials: false
+    - name: Check packaging logic
+      run: python3 -m unittest discover -s scripts/tests -p 'test_package_ios_ipa.py'
+        -v
+    - name: Run simulator unit tests
+      if: ${{ inputs.run_tests }}
+      run: bash scripts/test-ios-simulator.sh --project iphone/ios/IPhoneAgent.xcodeproj
+        --output-dir artifacts/ios-tests
+    - name: Build unsigned device IPA
+      id: package
+      run: bash scripts/build-ios-unsigned.sh --bundle-id "$JEV_BUNDLE_ID" --project
+        iphone/ios/IPhoneAgent.xcodeproj --output-dir artifacts/ios
+    - name: Publish unsigned IPA as a public prerelease
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        SOURCE_SHA: ${{ github.sha }}
+        RELEASE_TAG: jev-build-${{ github.run_id }}-${{ github.run_attempt }}
+        OUTPUT_DIR: ${{ steps.package.outputs.artifact_dir }}
+      run: "set -euo pipefail\nnotes=\"$RUNNER_TEMP/jev-release-notes.md\"\nprintf\
+        \ '%s\\n' \\\n  'Unsigned iPhone Agent with optional TypeSafe Jev navigation.'\
+        \ \\\n  'Re-sign the main app and AgentActivity extension before installing,\
+        \ e.g. Windows AltStore Classic.' \\\n  'No Apple account or model API key\
+        \ was used in this build. Configure keys inside the installed app.' \\\n \
+        \ 'See the repository README for setup and verification limits.' > \"$notes\"\
+        \ngh release create \"$RELEASE_TAG\" \\\n  \"$OUTPUT_DIR/ESP32Agent-unsigned.ipa\"\
+        \ \\\n  \"$OUTPUT_DIR/ESP32Agent-unsigned.ipa.sha256\" \\\n  \"$OUTPUT_DIR/manifest.json\"\
+        \ \\\n  --repo \"$GH_REPO\" --target \"$SOURCE_SHA\" --prerelease \\\n  --title\
+        \ \"Jev iPhone build $GITHUB_RUN_NUMBER\" --notes-file \"$notes\"\necho \"\
+        Download the unsigned IPA from Releases; personal signing is required.\" >>\
+        \ \"$GITHUB_STEP_SUMMARY\"\n"
+'on':
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: App bundle identifier (keep the same value for updates)
+        required: true
+        default: com.example.esp32agent
+        type: string
+      run_tests:
+        description: Run simulator unit tests before packaging
+        required: true
+        default: true
+        type: boolean
