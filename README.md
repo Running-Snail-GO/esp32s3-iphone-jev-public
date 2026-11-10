@@ -17,7 +17,18 @@ instead of uploading Actions artifacts. Source code, workflow logs and the resul
 Open **Actions > iPhone Agent IPA (Jev, public) > Run workflow**. Keep unit tests enabled and use a stable bundle ID.
 The workflow tests packaging, runs iPhone simulator unit tests, builds a device archive and publishes three release assets:
 `ESP32Agent-unsigned.ipa`, its SHA-256 file, and `manifest.json`.
-The initial candidate has not yet been compiled with Xcode or validated on a physical iPhone.
+
+## Validated build
+
+[Mac build and tests](https://github.com/Running-Snail-GO/esp32s3-iphone-jev-public/actions/runs/42738417786)
+completed successfully on 2026-11-10 with Xcode 26.6. XCTest: 248 cases, 2 skipped, 0 failures;
+all 39 added Jev/consent cases passed. The 10 archive-packaging tests also passed on macOS.
+
+[Download the unsigned iPhone IPA and checksums](https://github.com/Running-Snail-GO/esp32s3-iphone-jev-public/releases/tag/jev-build-42738417786-1).
+The release was built from commit `3727fde9a6fd07d84c45f1d75e38c5c1ca6b8363`.
+IPA SHA-256: `8888f527662dd01cd77fb63b52b29f804d1bfdab0168ac937bdad564ae7cfe45`.
+The ARM64 device app and extension require iOS 18.0+. Signing, physical-iPhone operation,
+live Jev API calls and performance still require device testing.
 
 ## Windows installation
 
