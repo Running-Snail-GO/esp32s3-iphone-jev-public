@@ -56,7 +56,7 @@ extension AutoCalibrator {
         if !full {  // quick check after a reconnect: one tap at the check point
             phase = .verifying
             guard pointer.calibrated else { return .failed("not calibrated") }
-            try await pointer.point(Self.check.x, Self.check.y)
+            try await pointer.point(Self.check.x, Self.check.y, aim: true)
             let sent = now()
             try await device.send("click")
             guard let p = await probe.tap(since: sent, timeout: Self.tapTimeout) else { return .noTaps }
@@ -117,12 +117,12 @@ extension AutoCalibrator {
 
         // stage 3: check with the agent's own move
         phase = .verifying
-        try await pointer.point(Self.check.x, Self.check.y)
+        try await pointer.point(Self.check.x, Self.check.y, aim: true)
         let sent = now()
         try await device.send("click")
         clicks += 1
         progress = Progress(done: clicks, total: total)
-        guard let p = await probe.tap(since: sent, timeout: Self.tapTimeout) else { return .done(max(lx.rms, ly.rms)) }
+        guard let p = await probe.tap(since: sent, timeout: Self.tapTimeout) else { return .noTaps }
         let error = max(abs(p.x - Self.check.x), abs(p.y - Self.check.y))
         pointer.setQuality(error)
         app.say(String(format: "probe check at (%.2f, %.2f): landed (%.3f, %.3f), ±%.1f%%", Self.check.x, Self.check.y,

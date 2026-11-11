@@ -80,3 +80,22 @@ A user reported successful Windows AltServer installation with this package afte
 Future packaging uses known file sizes to reserve ZIP64 headers only when needed. Packaging regression tests cover both classic ZIP headers and large-file ZIP64 support.
 
 Re-sign with your own Apple account before installing. In Settings > Model, enable Predictive batches (experimental) to try the new execution mode. Step review and Diagnostics display timing data. Real-phone task completion and speed still need testing.
+
+## Pointer accuracy (1.0.3)
+
+Both Jev and the vision actor now request a local pointer check before every tap.
+The app waits for a fresh mirrored frame, measures the cursor with a small nudge,
+and verifies at most two corrections. It makes no additional cloud model request.
+A measured miss that remains unresolved stops before clicking. If the initial
+measurement cannot see a cursor, the saved calibration is used and this is logged.
+
+Calibration now checks the same corrected pointing path used by agent taps.
+Errors above 1.5% are rejected instead of displayed as successful calibration;
+the final touch-probe click must arrive. Saved poor calibrations and changed screen
+aspect ratios trigger calibration before a task. A valid calibrated offset alone
+does not cause repeated calibration. Reconnecting during aiming prevents the click.
+
+Action timings include the local aiming cost. This can add latency per tap;
+model target recognition is independent of physical pointer accuracy. The test
+suite includes a simulated 4.5% initial miss and correction/connection failures.
+Real iPhone accuracy still requires testing after installation and recalibration.

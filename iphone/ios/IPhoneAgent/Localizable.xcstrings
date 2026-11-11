@@ -9272,6 +9272,26 @@
           }
         }
       }
+    },
+    "Pointer is still off target. Recalibrate before trying again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "鼠标纠偏后仍未对准目标，请重新校准后再试。"
+          }
+        }
+      }
+    },
+    "Calibration error is too large. Try Again before starting a task." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校准误差过大，请点“重试”重新校准后再开始任务。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

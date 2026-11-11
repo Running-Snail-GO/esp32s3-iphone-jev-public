@@ -21,6 +21,138 @@ import XCTest
     func dropLink() { drops += 1 }
 }
 
+/// Exercise the complete move → mirrored cursor measurement → correction → click path.
+/// The cursor has a 10% vertical gain error: a target at y=0.45 initially lands at 0.495.
+@MainActor final class PointerAccuracyTests: XCTestCase {
+    private final class MouseScreen: HIDDevice, ScreenSource {
+        var links = 1
+        var connected = true
+        var live = true
+        var updated: Double { now() }  // a continuously mirrored, static screen
+        var changed = 0.0
+        var capturedAt = 0.0
+        var aspect = 0.5
+        var sent: [String] = []
+        var clicks: [CGPoint] = []
+        var x = 0.0, y = 0.0
+        var ignoresVerticalCorrection = false
+        var hidesAfterCorrection = false
+        var hidden = false
+        var onSend: ((String) -> Void)?
+
+        var frame: Data? {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 800),
+                                                   format: Self.format)
+            return renderer.image { ctx in
+                UIColor.white.setFill()
+                ctx.fill(CGRect(x: 0, y: 0, width: 400, height: 800))
+                if !hidden {
+                    UIColor.darkGray.setFill()
+                    ctx.cgContext.fillEllipse(in: CGRect(x: x - 7, y: y - 7, width: 14, height: 14))
+                }
+            }.pngData()
+        }
+
+        private static var format: UIGraphicsImageRendererFormat {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            return format
+        }
+
+        func waitConnected(_ timeout: TimeInterval) async -> Bool { connected }
+        func send(_ command: String) async throws -> String {
+            sent.append(command)
+            let parts = command.split(separator: " ").map(String.init)
+            if parts[0] == "home" { x = 0; y = 0 }
+            if parts.count == 3, parts[0] == "move", let dx = Double(parts[1]), let dy = Double(parts[2]) {
+                x = min(max(x + dx, 0), 399)
+                if !(ignoresVerticalCorrection && dy < 0) { y = min(max(y + dy * 1.1, 0), 799) }
+                if hidesAfterCorrection && dy < 0 { hidden = true }
+            }
+            if command == "click" { clicks.append(CGPoint(x: x / 400, y: y / 800)) }
+            onSend?(command)
+            return ""
+        }
+    }
+
+    private func makePointer(_ source: MouseScreen) -> (Pointer, URL) {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        let pointer = Pointer(device: source, calibrationFile: file, screen: source)
+        pointer.finishCalibration(x: 0.5, y: 0.25)  // stale span 400 x 800
+        return (pointer, file)
+    }
+
+    func testFourPointFivePercentDriftIsCorrectedBeforeClicking() async throws {
+        let source = MouseScreen()
+        let (pointer, file) = makePointer(source)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try await pointer.tap(0.85, 0.45, aim: true)
+        let click = try XCTUnwrap(source.clicks.first)
+        XCTAssertEqual(source.clicks.count, 1)
+        XCTAssertEqual(click.x, 0.85, accuracy: Pointer.aimTolerance)
+        XCTAssertEqual(click.y, 0.45, accuracy: Pointer.aimTolerance)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(pointer.quality), Pointer.aimTolerance)
+        XCTAssertTrue(source.sent.contains { $0.hasPrefix("move ") && $0.split(separator: " ").last?.hasPrefix("-") == true })
+    }
+
+    func testUncorrectableDriftNeverClicksANeighbouringTarget() async throws {
+        let source = MouseScreen()
+        let (pointer, file) = makePointer(source)
+        source.ignoresVerticalCorrection = true
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            try await pointer.tap(0.85, 0.45, aim: true)
+            XCTFail("A measured miss must not be clicked")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Recalibrate")) }
+        XCTAssertTrue(source.clicks.isEmpty)
+        XCTAssertGreaterThan(try XCTUnwrap(pointer.quality), AutoCalibrator.tolerance)
+    }
+
+    func testLosingTheCursorAfterACorrectionDoesNotFallBackToABlindClick() async throws {
+        let source = MouseScreen()
+        let (pointer, file) = makePointer(source)
+        source.hidesAfterCorrection = true
+        defer { try? FileManager.default.removeItem(at: file) }
+        do { try await pointer.tap(0.85, 0.45, aim: true); XCTFail("Correction needs verification") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Recalibrate")) }
+        XCTAssertTrue(source.clicks.isEmpty)
+    }
+
+    func testReconnectWhileMeasuringNeverSendsTheClick() async throws {
+        let source = MouseScreen()
+        let (pointer, file) = makePointer(source)
+        source.onSend = { command in if command == "move 12 0" { source.links += 1 } }
+        defer { try? FileManager.default.removeItem(at: file) }
+        do { try await pointer.tap(0.85, 0.45, aim: true); XCTFail("Old link coordinates must be discarded") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("connection changed")) }
+        XCTAssertTrue(source.clicks.isEmpty)
+    }
+
+    func testBadSavedCalibrationRequiresRecalibration() {
+        let source = MouseScreen()
+        let (pointer, file) = makePointer(source)
+        defer { try? FileManager.default.removeItem(at: file) }
+        pointer.setQuality(0.045)
+        let restored = Pointer(device: source, calibrationFile: file)
+        XCTAssertTrue(restored.needsCalibration(aspect: 9 / 19.5, tolerance: AutoCalibrator.tolerance))
+        restored.setQuality(0.005)
+        XCTAssertFalse(restored.needsCalibration(aspect: 9 / 19.5, tolerance: AutoCalibrator.tolerance))
+        XCTAssertTrue(restored.needsCalibration(aspect: 1, tolerance: AutoCalibrator.tolerance))
+    }
+
+    func testAccurateCalibrationWithAnOffsetDoesNotContinuouslyRequestRecalibration() {
+        let source = MouseScreen()
+        let (pointer, file) = makePointer(source)
+        defer { try? FileManager.default.removeItem(at: file) }
+        pointer.applyProbe(x: .init(a: 1 / 400, b: 0.04, rms: 0),
+                           y: .init(a: 1 / 800, b: 0.04, rms: 0),
+                           samples: [(100, 200, 0.29, 0.29), (300, 600, 0.79, 0.79)])
+        XCTAssertGreaterThan(pointer.drift, AutoCalibrator.tolerance)
+        XCTAssertFalse(pointer.needsCalibration(aspect: 9 / 19.5, tolerance: AutoCalibrator.tolerance))
+    }
+}
+
 /// Port of server/tests/test_device.py, with a fake BLE transport instead of a TCP socket.
 @MainActor final class DeviceTests: XCTestCase {
     func testTimeoutGrowsWithMoveDistanceAndTextLength() {
@@ -111,6 +243,14 @@ import XCTest
         XCTAssertEqual(device.sent.filter { $0 == "home" }.count, 2)
         XCTAssertEqual(device.sent[0], "release")  // a new link: let go first
         XCTAssertEqual(device.sent[2], "move 200 400")
+    }
+
+    func testModelTapChecksActualPointerEvenWithoutPreciseOrAnEarlierMiss() async throws {
+        let phone = FakeGestures()
+        let agent = AgentLoop(phone: phone, screen: FakeScreen(), actor: nil, planner: nil, trace: nil)
+        try await agent.perform(["action": .str("tap"), "x": .int(850), "y": .int(450)])
+        XCTAssertEqual(phone.aims, [true])
+        XCTAssertEqual(phone.taps, [CGPoint(x: 0.85, y: 0.45)])
     }
 
     func testChineseIsTypedAsPinyinNeverPasted() async throws {

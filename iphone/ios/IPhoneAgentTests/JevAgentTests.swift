@@ -21,6 +21,7 @@ import XCTest
         XCTAssertEqual(phone.taps.count, 1)
         XCTAssertEqual(phone.taps[0].x, 0.2, accuracy: 0.001)
         XCTAssertEqual(phone.taps[0].y, 0.3, accuracy: 0.001)
+        XCTAssertEqual(phone.aims, [true])
         XCTAssertEqual(agent.steps.last?["executor"], .str("jev"))
         XCTAssertEqual(calls.map(\.role), ["jev"])
         XCTAssertEqual(calls.first?.reply?.usage["prompt_tokens"], 11)

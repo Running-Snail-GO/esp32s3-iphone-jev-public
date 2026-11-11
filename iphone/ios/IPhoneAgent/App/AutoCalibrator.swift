@@ -50,12 +50,9 @@ import UIKit
     var boardReady: Bool { app.board.connected && app.board.status?.usb == "ok" }
     var mirroring: Bool { app.board.status?.ap == "streaming" }
 
-    /// Calibration is due: never done, the screen shape changed, or the learned correction drifted.
+    /// Calibration is due: never done, the screen shape changed, or its measured error is too large.
     var needed: Bool {
-        let p = app.pointer
-        guard p.calibrated else { return true }
-        if let aspect = p.aspect, abs(aspect - DeviceScreen.aspect) > 0.02 { return true }
-        return p.drift > Self.tolerance
+        app.pointer.needsCalibration(aspect: DeviceScreen.aspect, tolerance: Self.tolerance)
     }
 
     /// Show the Calibrate button: due, and everything it needs is up.
@@ -70,8 +67,12 @@ import UIKit
     /// Before a run: calibrate if needed and wait for it. True when the pointer is calibrated.
     func ensureCalibrated() async -> Bool {
         while busy { try? await Task.sleep(nanoseconds: 200_000_000) }
-        if !app.pointer.calibrated && boardReady { await run(why: String(localized: "before a run")) }
-        return app.pointer.calibrated
+        if needed {
+            guard boardReady else { return false }
+            await run(why: String(localized: "before a run"))
+            return phase == .done && !needed
+        }
+        return true
     }
 
     /// One automatic calibration, on the board when the app is in front.
@@ -161,6 +162,10 @@ import UIKit
     }
 
     func finished(_ error: Double) {
+        guard error.isFinite, error <= Self.tolerance else {
+            app.pointer.setQuality(error)
+            return failed(String(localized: "Calibration error is too large. Try Again before starting a task."))
+        }
         link = app.board.commands.links
         progress = nil
         problem = nil

@@ -14,6 +14,7 @@ import UIKit
     static let nudge = 12                   // mouse units the pointer is wiggled by to find it on screen
     static let aimTolerance = 0.008         // screen fraction; a bigger miss is corrected before pressing
     static let maxMiss = 0.06               // bigger misses are still corrected, but not learned from
+    static let maxAimCorrections = 2
 
     struct Span: Codable, Equatable { var w: Int, h: Int }
     private struct Saved: Codable { var w: Int, h: Int, seen: [String: [[Double]]]?, quality: Double?, aspect: Double? }
@@ -50,6 +51,14 @@ import UIKit
     }
 
     var calibrated: Bool { span != nil }
+
+    /// A good fit may include an offset; its measured error, rather than that offset, decides whether it is usable.
+    func needsCalibration(aspect current: Double, tolerance: Double) -> Bool {
+        guard calibrated else { return true }
+        if let aspect, abs(aspect - current) > 0.02 { return true }
+        if let quality { return !quality.isFinite || quality > tolerance }
+        return drift > tolerance
+    }
 
     private func remember(_ axis: String, _ sample: (Double, Double)) {
         seen[axis] = Array((seen[axis, default: []] + [sample]).suffix(12))  // deque(maxlen=12)
@@ -155,31 +164,53 @@ import UIKit
     func point(_ x: Double, _ y: Double, aim: Bool = false) async throws {
         guard calibrated else { throw DeviceError(message: "pointer not calibrated") }
         try await moveTo(dx(x), dy(y))
-        if aim && screen != nil { try await self.aim(x, y) }
+        if aim && screen?.live == true { try await self.aim(x, y) }
     }
 
     /// Closed loop: find the real pointer on screen, fix a miss, and learn the error for later moves.
     private func aim(_ x: Double, _ y: Double) async throws {
-        guard let span, let found = try await measure(x, y, model: false) else {
-            log(String(format: "aim (%.3f, %.3f): pointer not found", x, y))
-            return
+        guard let span else { return }
+        var observedMiss = false
+        for attempt in 0...Self.maxAimCorrections {
+            try Task.checkCancellation()
+            let found = try await measure(x, y, model: false)
+            guard screen?.live == true else { throw BlindError() }
+            guard let found else {
+                log(String(format: "aim (%.3f, %.3f): pointer not found%@", x, y,
+                           observedMiss ? " after correction" : "; using calibration"))
+                // Some mirrored frames do not show the cursor. Keep the calibrated path when
+                // nothing was measured; a known miss must never become an unverified click.
+                if !observedMiss { return }
+                break
+            }
+            let fx = Double(found.x), fy = Double(found.y)
+            let error = max(abs(fx - x), abs(fy - y))
+            log(String(format: "aim (%.3f, %.3f): found (%.3f, %.3f), error %.2f%%, check %d",
+                       x, y, fx, fy, error * 100, attempt + 1))
+            if error <= Self.maxMiss, let pos {
+                // Record the units actually sent, including previous corrections, not a newly fitted target.
+                remember("x", (Double(pos.0) / Double(span.w), fx))
+                remember("y", (Double(pos.1) / Double(span.h), fy))
+            }
+            setQuality(error)
+            if error <= Self.aimTolerance { return }
+            observedMiss = true
+            guard attempt < Self.maxAimCorrections else { break }
+            let mx = Int(((x - fx) * Double(span.w)).rounded(.toNearestOrEven))
+            let my = Int(((y - fy) * Double(span.h)).rounded(.toNearestOrEven))
+            try await device.send("move \(mx) \(my)")
+            if let p = pos { pos = (p.0 + mx, p.1 + my) }
         }
-        let fx = Double(found.x), fy = Double(found.y)
-        if max(abs(fx - x), abs(fy - y)) <= Self.maxMiss {  // learn from normal drift only, never a stray reading
-            remember("x", (fix(x, "x"), fx))
-            remember("y", (fix(y, "y"), fy))
-            save()
-        }
-        if abs(fx - x) <= Self.aimTolerance && abs(fy - y) <= Self.aimTolerance { return }
-        let mx = Int(((x - fx) * Double(span.w)).rounded(.toNearestOrEven)), my = Int(((y - fy) * Double(span.h)).rounded(.toNearestOrEven))
-        try await device.send("move \(mx) \(my)")  // fix this miss right away
-        if let p = pos { pos = (p.0 + mx, p.1 + my) }
+        pos = nil
+        throw DeviceError(message: String(localized: "Pointer is still off target. Recalibrate before trying again."))
     }
 
     /// Wiggle the pointer and find it on screen, near the target first, then anywhere. model: ask the vision
     /// model when the pixels don't show it (~20 s, rarely right); a tap's aim never waits for that.
     private func measure(_ x: Double, _ y: Double, model: Bool = true) async throws -> CGPoint? {
-        guard let screen, let span else { return nil }
+        guard let screen, screen.live, let span else { return nil }
+        // The model's screenshot may precede the move. Never compare that old cursor with the nudge.
+        guard await screen.fresh(since: now(), timeout: 1.2) != nil else { return nil }
         let nudge = x < 0.9 ? Self.nudge : -Self.nudge  // stay clear of the screen edge
         await screen.settled(quiet: 0.15, least: 0.1, most: 0.6)  // pointer at rest
         let before = screen.frame, sent = now()
@@ -257,9 +288,15 @@ import UIKit
         (pos, moves) = ((0, 0), 0)
     }
 
-    /// aim: find the pointer on screen first (slower); worth it when a tap just missed.
+    /// aim: check the actual pointer locally before clicking. Agent taps enable this for both executors.
     func tap(_ x: Double, _ y: Double, aim: Bool = false) async throws {
+        let revision = device.links
         try await point(x, y, aim: aim)
+        try Task.checkCancellation()
+        guard device.connected, device.links == revision else {
+            pos = nil
+            throw DeviceError(message: "board connection changed before click")
+        }
         try await device.send("click")
         try await Task.sleep(nanoseconds: UInt64(Self.tapGap * 1e9))
     }

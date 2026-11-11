@@ -453,7 +453,10 @@ import XCTest
     let device: HIDDevice = FakeDevice()
     var calls: [String] = []
     var taps: [CGPoint] = []
-    func tap(_ x: Double, _ y: Double, aim: Bool) async throws { calls.append("tap"); taps.append(CGPoint(x: x, y: y)) }
+    var aims: [Bool] = []
+    func tap(_ x: Double, _ y: Double, aim: Bool) async throws {
+        calls.append("tap"); taps.append(CGPoint(x: x, y: y)); aims.append(aim)
+    }
     func swipe(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, hold: Bool) async throws { calls.append("swipe") }
     func drag(_ points: [CGPoint], hold: Bool) async throws { calls.append("drag") }
     func type(_ text: String) async throws { calls.append("type") }
