@@ -5,6 +5,18 @@ The app requires iOS 18+, an ESP32-S3 USB HID/AirPlay bridge, and your own visio
 Optional TypeSafe Jev decisions handle bounded navigation; the vision model plans, types, handles uncertain steps and verifies completion.
 Jev image support is experimental. No speed or accuracy claim has been validated for this build.
 
+## Latest verified build: 1.0.3
+
+Download [Agent103.ipa](https://github.com/Running-Snail-GO/esp32s3-iphone-jev-public/releases/download/jev-build-42989568827-1/Agent103.ipa) and its SHA-256 file from the [1.0.3 release](https://github.com/Running-Snail-GO/esp32s3-iphone-jev-public/releases/tag/jev-build-42989568827-1).
+This version adds local cursor correction for both executors and rejects measured calibration error above 1.5%.
+Re-sign and update the app, then repeat Settings > Calibration. No ESP32 firmware update is needed.
+
+[Mac validation](https://github.com/Running-Snail-GO/esp32s3-iphone-jev-public/actions/runs/42989568827): 264 XCTest cases, 2 skipped, 0 failures, and a successful device Release archive.
+App and extension are 1.0.3 / build 3, ARM64, iOS 18+, with unchanged bundle identifiers.
+Downloaded package CRC, version, SHA-256 and classic ZIP local headers passed validation.
+SHA-256: `2034bf0e332f75c0845c4a82328a5efdf23aee7c8f7f068832aa66fbe8a5ff78`.
+Physical-iPhone installation, accuracy and latency of this update still need testing.
+
 ## Cloud build
 
 This candidate contains only iOS app sources, tests, bundled resources, prompts, build scripts and license notices.
