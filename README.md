@@ -68,3 +68,15 @@ AI request time includes network and provider processing, not pure GPU time.
 
 This release remains experimental. Compilation and fake-device tests do not
 establish real-phone accuracy or a speedup; compare on your own phone after signing.
+
+## Windows installation package
+
+For Windows AltServer direct sideloading, download **Agent102.ipa** and its matching SHA-256 file.
+
+Agent102.ipa is a classic ZIP repack of the 1.0.2 build above. All 47 member names, uncompressed contents and Unix attributes were compared with the original build and match. App version is 1.0.2, build 2, including AgentActivity.appex. CRC and archive header validation passed.
+
+A user reported successful Windows AltServer installation with this package after the original file-read error. The repack also uses a shorter filename and local path, so ZIP64 compatibility has not been isolated as the sole cause.
+
+Future packaging uses known file sizes to reserve ZIP64 headers only when needed. Packaging regression tests cover both classic ZIP headers and large-file ZIP64 support.
+
+Re-sign with your own Apple account before installing. In Settings > Model, enable Predictive batches (experimental) to try the new execution mode. Step review and Diagnostics display timing data. Real-phone task completion and speed still need testing.

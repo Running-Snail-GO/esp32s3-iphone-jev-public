@@ -11,6 +11,7 @@ import stat
 import struct
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 
@@ -119,6 +120,27 @@ class PackageIPATests(unittest.TestCase):
         manifest = self.package()
         self.assertEqual(manifest["app"]["bundle_id"], self.bundle_id)
         self.assertEqual(manifest["extensions"][0]["bundle_id"], self.bundle_id + ".activity")
+
+    def test_small_files_use_classic_zip_local_headers(self):
+        self.package()
+        ipa = self.output / packager.IPA_NAME
+        with zipfile.ZipFile(ipa) as package, ipa.open("rb") as raw:
+            for member in package.infolist():
+                with self.subTest(member=member.filename):
+                    raw.seek(member.header_offset)
+                    header = struct.unpack("<4s5H3I2H", raw.read(30))
+                    self.assertLessEqual(header[1], 20)
+                    self.assertNotEqual(header[7], 0xFFFFFFFF)
+                    self.assertNotEqual(header[8], 0xFFFFFFFF)
+
+    def test_large_files_can_still_use_zip64(self):
+        (self.app / "large.bin").write_bytes(b"x" * 2048)
+        with mock.patch.object(zipfile, "ZIP64_LIMIT", 1024):
+            self.package()
+        with zipfile.ZipFile(self.output / packager.IPA_NAME) as package:
+            member = package.getinfo("Payload/IPhoneAgent.app/large.bin")
+            self.assertEqual(package.read(member), b"x" * 2048)
+            self.assertGreaterEqual(member.extract_version, 45)
 
     def test_preserves_internal_symlink_without_following_it(self):
         (self.app / "asset.txt").write_text("asset", encoding="utf-8")

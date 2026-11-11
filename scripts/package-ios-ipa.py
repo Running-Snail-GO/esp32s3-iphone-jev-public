@@ -146,7 +146,10 @@ def package_archive(archive, output_dir, bundle_id):
             elif stat.S_ISDIR(mode):
                 package.writestr(item, b"")
             else:
-                with member.open("rb") as source, package.open(item, "w", force_zip64=True) as target:
+                # Known sizes let zipfile reserve ZIP64 headers only for files that need them.
+                # Small device IPAs should remain readable by ordinary ZIP readers.
+                item.file_size = member.lstat().st_size
+                with member.open("rb") as source, package.open(item, "w") as target:
                     while chunk := source.read(1024 * 1024):
                         target.write(chunk)
     digest = hashlib.sha256()
